@@ -12,6 +12,7 @@ namespace AiAgent
         public int MaxIterations { get; set; } = 25;
         public int MaxReadChars { get; set; } = 8000;
         public bool LogRawReplies { get; set; }
+        public bool RequireApproval { get; set; } = true;
     }
 
     internal class BrowserSettings

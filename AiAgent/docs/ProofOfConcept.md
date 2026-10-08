@@ -36,7 +36,8 @@ Console task ──► Persona + task ──► AI chat (Edge via Playwright)
     "WorkspacePath": "C:\\Users\\Ryan Hoang\\Desktop\\Test",
     "MaxIterations": 25,
     "MaxReadChars": 8000,
-    "LogRawReplies": true
+    "LogRawReplies": true,
+    "RequireApproval": true
   },
   "Browser": {
     "AiChatUrl": "https://chatgpt.com/",
@@ -56,35 +57,20 @@ Console task ──► Persona + task ──► AI chat (Edge via Playwright)
 ### 3. Persona prompt: `Prompts/persona.md`
 Load it at startup, replace `{{WORKSPACE}}`, and send it on its own right after the page loads. The AI acknowledges with `{"action":"complete","message":"ready"}`.
 
-````text
-You are a concise developer assistant working inside a local workspace at {{WORKSPACE}}.
-You cannot see files directly; you work ONLY by requesting tools, one per reply.
+See [`Prompts/persona.md`](../Prompts/persona.md) for the full text. It covers:
+- **How local commands work.** The tools are called "local commands" and are described as *not* the AI's built-in tools. Without this, the AI tends to look for them in its own tool list and reply that they're "unavailable".
+- **The command list:**
+  - Reading: `list`, `read_file`, `search_files`, `ask_user`
+  - Changing files: `create_file`, `write_file`, `edit_file`, `delete_file`, `move_file`, `create_folder`
+- **Rules for writing code:**
+  - Read a file before changing it, and prefer `edit_file` for small changes.
+  - `old_text` must appear exactly once in the file.
+  - Content is escaped inside the JSON string.
+  - If the user denies a change, don't retry the same change.
+- **The JSON reply format and rules,** plus an example exchange showing a request and a reply.
+- **A closing instruction** to acknowledge with `ready`.
 
-TOOLS
-- list(path)                 → files/folders in a directory (relative to workspace)
-- read_file(path, offset?)   → file text, truncated; use offset to read further
-- search_files(query)        → files + lines containing the text
-- ask_user(question)         → ask the human a clarifying question
-
-RESPONSE FORMAT (mandatory)
-Every reply MUST end with exactly one ```json block in this shape:
-```json
-{
-  "thought": "short reasoning",
-  "action": "tool" | "complete" | "error",
-  "tool": "read_file",
-  "arguments": { "path": "src/Program.cs" },
-  "message": "final answer or error text (for complete/error)"
-}
-```
-Rules:
-- One tool call per reply. Omit "tool"/"arguments" when action is complete/error.
-- Paths are relative to the workspace. Never access anything outside it.
-- Tool results come back to you as:
-  {"tool_result": {"tool": "...", "ok": true, "output": "..."}}
-- If ok is false, recover with another tool call or return action "error".
-- If you reply without valid JSON you will be asked again (max 3 times).
-````
+Each task is also sent with a one-line reminder of the JSON protocol (`TaskReminder` in `Program.cs`).
 
 ### 4. Browser wrapper: `AiChatBrowser.cs`
 - `StartAsync()`:
@@ -117,6 +103,15 @@ Rules:
 - `read_file`: read the file, apply `offset`, and truncate to `MaxReadChars`. Add a note like `"truncated, next offset = N"`.
 - `search_files`: plain substring search over text files. Cap the output at about 50 matches and show `path:line: text`.
 - `ask_user`: print the question and return `Console.ReadLine()`.
+- `create_file(path, content)`: creates a new file and any missing parent folders. Fails if the file already exists.
+- `write_file(path, content)`: replaces the whole file, or creates it.
+- `edit_file(path, old_text, new_text)`:
+  - Replaces exactly one occurrence. It fails if `old_text` is missing or appears more than once, and the message tells the AI how to fix its request.
+  - Matching ignores CRLF vs LF differences, and the file's original line endings are kept.
+- `delete_file(path)`: deletes files only, never folders.
+- `move_file(path, new_path)`: moves or renames a file. Both paths must be inside the workspace.
+- `create_folder(path)`: creates the folder and any missing parents.
+- **Approval:** when `Agent:RequireApproval` is `true` (the default), every file-changing command shows its arguments in the console first. Content previews are capped at 20 lines. It then asks `Allow? (y/n)`. A "no" sends `ok:false` with "The user denied this action".
 - Wrap each tool in try/catch and return `ok:false` with the exception message.
 
 ### 7. Agent loop: `Program.cs`
@@ -155,9 +150,11 @@ Rules:
 - Show a "log in, then press Enter" prompt the first time.
 
 **More tools (with approval)**
-- `write_file`, `create_file`, `delete_file`, `run_command`.
-- Ask for console y/n approval before each of these.
-- `run_command`: set a timeout, use the workspace as the working directory, and capture and cap stdout/stderr.
+- `run_command`, for example so the AI can build or test the code it writes:
+  - set a timeout
+  - use the workspace as the working directory
+  - capture stdout/stderr and cap their length
+- Show a diff in the approval prompt for `write_file` and `edit_file`, instead of a raw content preview.
 
 **Structure (once stable)**
 - Pull out an `IAiChatBackend` so you can swap the browser backend for an AI provider's API. An API supports native tool calling and removes the scraping and terms-of-use issues.

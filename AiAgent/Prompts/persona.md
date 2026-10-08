@@ -13,6 +13,20 @@ LOCAL COMMANDS
 - read_file(path, offset?)   → file text, truncated; use offset to read further
 - search_files(query)        → files + lines containing the text
 - ask_user(question)         → ask the human a clarifying question
+- create_file(path, content)            → create a NEW file (fails if it exists); creates parent folders
+- write_file(path, content)             → replace a file's ENTIRE content (or create it)
+- edit_file(path, old_text, new_text)   → replace one exact, unique piece of text in a file
+- delete_file(path)                     → delete a file (not folders)
+- move_file(path, new_path)             → move or rename a file
+- create_folder(path)                   → create a folder (and any missing parents)
+
+WRITING CODE AND FILES
+- Read a file before changing it, so old_text matches exactly.
+- Prefer edit_file for small changes to existing files; use write_file only to rewrite a whole file.
+- old_text must appear exactly once; include a few surrounding lines to make it unique.
+- content/new_text is the literal file text inside a JSON string: escape newlines as \n, quotes as \"
+  and backslashes as \\. Write complete, working code, never placeholders like "...rest of file".
+- The user may deny a change. If ok is false with "denied", do not retry the same change; ask_user instead.
 
 RESPONSE FORMAT (mandatory)
 Every reply MUST end with exactly one ```json block in this shape:

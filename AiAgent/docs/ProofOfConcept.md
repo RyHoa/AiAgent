@@ -97,7 +97,7 @@ Each part can change without touching the others:
       "dotnet build", "dotnet test", "dotnet run",
       "dotnet new webapi", "dotnet new sln", "dotnet new console", "dotnet new xunit",
       "dotnet sln add", "dotnet add package", "dotnet add reference",
-      "npm create vite@latest", "npm install", "npm ci", "npm run build", "npm run lint", "npm test"
+      "npm view", "npm install", "npm ci", "npm run build", "npm run lint", "npm test"
     ],
     "CommandTimeoutSeconds": 300,
     "MaxCommandOutputChars": 4000,
@@ -224,10 +224,12 @@ All in namespace `AiAgent.Tools`, as `internal static` classes. A class name end
     - The defaults cover `dotnet build/test/run`, specific `dotnet new` templates (`webapi`, `sln`, `console`, `xunit`), `dotnet sln add`, `dotnet add package/reference`, and the npm commands for a Vite + React front end.
     - There's deliberately no bare `dotnet new`, which would allow `dotnet new install`.
     - There's deliberately no `npm run dev`, which never exits.
+    - There's deliberately no `npm create`. At work, npm uses an approved-packages-only Azure DevOps feed, which has no scaffolders.
+  - **Company npm feed only:** for `npm`/`npx`, options containing `registry`, `userconfig` or `globalconfig`, and package specs with `://`, `git+`, `git:`, `github:`, `gitlab:`, `bitbucket:` or `gist:`, are refused. Packages may only come from the feed set up in the user's own `.npmrc`. See [FileMakerConversion.md](FileMakerConversion.md).
   - **No shell:** the program is started directly, so `&&`, `|`, `>` and similar are rejected.
   - **Finding the program:** a bare name such as `dotnet` or `npm` is looked up on `PATH`, trying `.exe`, then `.cmd`, then `.bat` in each folder. On Windows, `npm` and `npx` are `.cmd` scripts.
   - **Batch files (`.cmd`/`.bat`):** Windows runs these through `cmd.exe`, which acts on `& | < > ^ % ! " ( )` even inside an argument. So for these programs, any argument containing one of those characters, or a line break, is refused.
-  - **Workspace only:** it runs in the workspace, or in `working_dir` inside it. Absolute paths and `..` arguments must also point inside the workspace.
+  - **Workspace only:** it runs in the workspace, or in `working_dir` inside it. Absolute paths and `..` arguments must also point inside the workspace. A `working_dir` that doesn't exist yet gets a clear "does not exist. Create it first" error, instead of Windows' generic process-start error.
   - **No keyboard input:** stdin is closed, so programs that wait for input don't hang.
   - **Timeout:** a command that runs longer than `CommandTimeoutSeconds` (default 300, because `npm install` and first restores are slow) is stopped, along with any processes it started.
   - **Output:** stdout and stderr are returned together, with workspace paths made relative. Output longer than `MaxCommandOutputChars` (default 4000) is shortened, keeping the first quarter and the end, where errors usually are.

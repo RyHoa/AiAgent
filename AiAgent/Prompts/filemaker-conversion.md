@@ -14,10 +14,20 @@ Progress across sessions (important)
 
 Target solution layout
 - src/Api: ASP.NET Core Web API, EF Core, SQL Server (dotnet new webapi -o src/Api)
-- src/Web: React + Vite + TypeScript (npm create vite@latest src/Web -- --template react-ts)
+- src/Web: React + Vite + TypeScript, created by hand (see npm packages below)
 - tests/Api.Tests: xUnit (dotnet new xunit -o tests/Api.Tests); Vitest for src/Web
 - docs/fm/: one short spec per table, layout and script, written from the DDR before coding
 - One solution file at the root (dotnet new sln, dotnet sln add ...)
+
+npm packages (company feed only)
+- npm installs ONLY from the company package feed set up in the user's own .npmrc. It holds approved
+  packages only. Never create or edit a .npmrc file, never pass --registry, and never install from a URL
+  or git. These are blocked.
+- npm create is NOT available. Create src/Web yourself: package.json (scripts: "build": "tsc -b && vite
+  build", "test": "vitest run"), vite.config.ts, tsconfig.json, index.html, src/main.tsx, src/App.tsx.
+  Then run npm install with working_dir src/Web.
+- Before adding a dependency, check the feed has it: npm view <package> versions. Use a version it lists.
+- If a package you need is not on the feed, do not look for another source: use ask_user.
 
 How FileMaker maps to the new app
 - Table -> EF Core entity + DbSet; field types -> C# types (Text->string, Number->decimal/int,

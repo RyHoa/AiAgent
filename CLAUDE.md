@@ -73,12 +73,15 @@ dotnet run --project AiAgent          # opens Edge, sends the persona, then prom
 
 ## Safety boundaries (don't weaken these)
 - **`WorkspaceGuard.ResolvePath`:** every path must resolve inside `Agent:WorkspacePath`. Paths outside it are rejected.
+- **`WorkspaceGuard.ResolveWritablePath`:** every tool that changes, moves or deletes files refuses protected file names. Right now that's `.npmrc`, in any capitalisation. Use it, not `ResolvePath`, in any new tool that writes.
 - **`WorkspaceGuard.ResolveSubfolder`:** folder tools also reject the workspace folder itself (`.`, `""`, `x/..`), so it can never be deleted or renamed. This is enforced in code, not just in the persona.
 - **`run_command`:**
   - Runs **without a shell**: shell operators are rejected, and `ProcessStartInfo.ArgumentList` is used.
   - Only commands with a token-prefix match in `Agent:AllowedCommands` are allowed.
     - Don't add a bare `"dotnet new"`, because that would also allow `dotnet new install`.
     - Don't add `npm run dev` or other commands that never exit.
+    - Don't add `npm create`/`npx` scaffolders. At work, npm uses an Azure DevOps feed with approved packages only and no upstream to npmjs.
+  - **Company npm feed only:** `CheckNpmPackageSource` refuses npm options that switch registry or config (`--registry`, `--@scope:registry`, `--userconfig`, `--globalconfig`), and package specs from URLs or git hosts. Together with the protected `.npmrc`, this keeps the feed the only package source. Don't relax it.
   - Bare program names are resolved on `PATH` (`.exe`, then `.cmd`, then `.bat`), so `npm` works. For `.cmd`/`.bat` programs, arguments containing `& | < > ^ % ! " ( )` or line breaks are refused, because `cmd.exe` would act on them. Don't relax this.
   - Path arguments are checked by the guard.
   - Stdin is closed.

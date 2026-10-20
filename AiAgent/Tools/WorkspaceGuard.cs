@@ -29,6 +29,21 @@ namespace AiAgent.Tools
             return full;
         }
 
+        // Files the AI may never create, change, move or delete: a project .npmrc could point npm at another registry
+        // and bypass the company feed set up in the user's own .npmrc.
+        private static readonly HashSet<string> ProtectedFileNames = new(StringComparer.OrdinalIgnoreCase) { ".npmrc" };
+
+        /// <summary>Like ResolvePath, but also rejects protected file names. Used by every tool that changes files.</summary>
+        internal static string ResolveWritablePath(string workspace, string path)
+        {
+            string full = ResolvePath(workspace, path);
+            if (ProtectedFileNames.Contains(Path.GetFileName(Path.TrimEndingDirectorySeparator(full))))
+                throw new UnauthorizedAccessException(
+                    $"'{path}' is a protected file and cannot be created, changed, moved or deleted. " +
+                    "Packages come from the company feed configured in the user's own .npmrc.");
+            return full;
+        }
+
         internal static string Relative(string root, string fullPath) =>
             Path.GetRelativePath(root, fullPath).Replace('\\', '/');
     }

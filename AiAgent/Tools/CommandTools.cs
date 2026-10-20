@@ -9,6 +9,10 @@ namespace AiAgent.Tools
         private static readonly HashSet<string> ShellOperators = new() { "&&", "||", "|", "&", ";", ">", ">>", "<", "2>", "2>&1" };
         private static readonly string[] ExecutableExtensions = { ".exe", ".cmd", ".bat" };
         private static readonly char[] BatchMetacharacters = { '&', '|', '<', '>', '^', '%', '!', '"', '(', ')', '\r', '\n' };
+        // npm options that point npm at a different registry or config file, which would bypass the company feed.
+        private static readonly string[] NpmConfigOptionWords = { "registry", "userconfig", "globalconfig" };
+        // Package specs that download from somewhere other than the registry (git hosts, URLs).
+        private static readonly string[] NpmOutsideSourcePrefixes = { "git+", "git:", "github:", "gitlab:", "bitbucket:", "gist:" };
 
         /// <summary>
         /// Runs an allow-listed command (no shell) in the workspace and returns its exit code and output.
@@ -37,6 +41,9 @@ namespace AiAgent.Tools
                 throw new ArgumentException(
                     $"--project needs a .csproj file, not a .cs file. To run a single file use: dotnet run {tokens[projectFlag + 1]}");
 
+            if (IsNpm(tokens[0]))
+                CheckNpmPackageSource(tokens);
+
             // npm and npx are .cmd scripts on Windows, which Process.Start can't find by bare name. Windows runs .cmd/.bat
             // files through cmd.exe, which interprets characters like & and | even inside arguments, so those are refused.
             string executable = ResolveExecutable(tokens[0]);
@@ -51,9 +58,16 @@ namespace AiAgent.Tools
                 }
             }
 
+            // Without this check Windows reports only "An error occurred trying to start process ... with working directory".
+            string workingDirectory = WorkspaceGuard.ResolvePath(ws, workingDir);
+            if (!Directory.Exists(workingDirectory))
+                throw new DirectoryNotFoundException(
+                    $"working_dir '{workingDir}' does not exist. Create it first (create_folder or by creating a file in it), " +
+                    "or run the command from an existing folder.");
+
             var start = new ProcessStartInfo(executable)
             {
-                WorkingDirectory = WorkspaceGuard.ResolvePath(ws, workingDir),
+                WorkingDirectory = workingDirectory,
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -129,6 +143,30 @@ namespace AiAgent.Tools
             }
 
             throw new FileNotFoundException($"'{name}' was not found on PATH. Is it installed?");
+        }
+
+        private static bool IsNpm(string program)
+        {
+            return program.Equals("npm", StringComparison.OrdinalIgnoreCase)
+                || program.Equals("npx", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Packages may only come from the registry in the user's own .npmrc (the company feed). Refuses options that
+        /// switch registry or config file, and package specs that download from git hosts or URLs.
+        /// </summary>
+        private static void CheckNpmPackageSource(List<string> tokens)
+        {
+            foreach (string token in tokens.Skip(1))
+            {
+                string lower = token.ToLowerInvariant();
+                bool switchesRegistryOrConfig = lower.StartsWith("--") && NpmConfigOptionWords.Any(word => lower.Contains(word));
+                bool outsideSource = lower.Contains("://") || NpmOutsideSourcePrefixes.Any(prefix => lower.StartsWith(prefix));
+                if (switchesRegistryOrConfig || outsideSource)
+                    throw new UnauthorizedAccessException(
+                        $"'{token}' is not allowed: packages may only come from the company feed configured in the user's .npmrc. " +
+                        "Use a plain package name (e.g. react or react@18.3.1). If a package is not on the feed, use ask_user.");
+            }
         }
 
         private static bool IsBatchFile(string executable)

@@ -63,7 +63,7 @@ namespace AiAgent.Tools
 
         internal static ToolOutput CreateFile(string workspace, string path, string content)
         {
-            string full = WorkspaceGuard.ResolvePath(workspace, path);
+            string full = WorkspaceGuard.ResolveWritablePath(workspace, path);
             if (File.Exists(full))
                 throw new IOException($"'{path}' already exists. Use write_file to replace it or edit_file to change part of it.");
             Directory.CreateDirectory(Path.GetDirectoryName(full)!);
@@ -73,7 +73,7 @@ namespace AiAgent.Tools
 
         internal static ToolOutput WriteFile(string workspace, string path, string content)
         {
-            string full = WorkspaceGuard.ResolvePath(workspace, path);
+            string full = WorkspaceGuard.ResolveWritablePath(workspace, path);
             bool existed = File.Exists(full);
             Directory.CreateDirectory(Path.GetDirectoryName(full)!);
             File.WriteAllText(full, content);
@@ -83,7 +83,7 @@ namespace AiAgent.Tools
         /// <summary>Replaces one exact occurrence of old_text. Matching ignores CRLF vs LF differences.</summary>
         internal static ToolOutput EditFile(string workspace, string path, string oldText, string newText)
         {
-            string full = WorkspaceGuard.ResolvePath(workspace, path);
+            string full = WorkspaceGuard.ResolveWritablePath(workspace, path);
             if (oldText.Length == 0)
                 throw new ArgumentException("old_text must not be empty.");
 
@@ -105,7 +105,7 @@ namespace AiAgent.Tools
 
         internal static ToolOutput DeleteFile(string workspace, string path)
         {
-            string full = WorkspaceGuard.ResolvePath(workspace, path);
+            string full = WorkspaceGuard.ResolveWritablePath(workspace, path);
             if (!File.Exists(full))
                 throw new FileNotFoundException($"'{path}' is not a file. Use delete_folder for folders.");
             File.Delete(full);
@@ -114,8 +114,8 @@ namespace AiAgent.Tools
 
         internal static ToolOutput MoveFile(string workspace, string path, string newPath)
         {
-            string from = WorkspaceGuard.ResolvePath(workspace, path);
-            string to = WorkspaceGuard.ResolvePath(workspace, newPath);
+            string from = WorkspaceGuard.ResolveWritablePath(workspace, path);
+            string to = WorkspaceGuard.ResolveWritablePath(workspace, newPath);
             Directory.CreateDirectory(Path.GetDirectoryName(to)!);
             File.Move(from, to);
             return ToolOutput.Success($"Moved {path} to {newPath}.");

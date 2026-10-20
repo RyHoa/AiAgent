@@ -26,13 +26,21 @@ dotnet run --project AiAgent          # opens Edge, sends the persona, then prom
 - **No test project.** Tools can be exercised without a browser by calling `ToolDispatcher.Execute(toolName, JsonElement args, AgentSettings)` directly. Its return value is the exact `tool_result` JSON the AI would receive. For approval or `ask_user` paths, feed answers with `Console.SetIn`.
 
 ## Architecture (the flow across files)
-1. **`Program.cs`:**
-   - Loads config.
-   - Fills the `{{WORKSPACE}}` and `{{ALLOWED_COMMANDS}}` placeholders in `persona.md`.
-   - Sends the persona once; the AI acknowledges with `{"action":"complete","message":"ready"}`.
-   - Then loops over console tasks. `RunTaskAsync` sends `TASK: …` and gets a reply:
-     - `action:"tool"`: the reply goes to `ToolDispatcher.Execute`, and the result JSON is sent back with a "(Current task: … continue)" reminder (`taskAnchor`). Without that reminder, the logged-out model treats the last tool result as the whole task.
-     - `action:"complete"` / `"error"`: the task ends.
+1. **`Program.cs`:** start-up only. `Main` loads config (`appsettings.json` + optional `appsettings.local.json`), checks the workspace exists, starts the browser, then creates an `AgentSession` and loops over console tasks.
+   - **`AgentSession.cs`:** one conversation with the AI.
+     - `SendPersonaAsync`: sends the persona once; the AI acknowledges with `{"action":"complete","message":"ready"}`.
+     - `RunTaskAsync`: sends `TASK: …` and gets a reply.
+       - `action:"tool"`: the reply goes to `ToolDispatcher.Execute`, and the result JSON is sent back with a "(Current task: … continue)" reminder. Without that reminder, the logged-out model treats the last tool result as the whole task.
+       - `action:"complete"` / `"error"`: the task ends.
+     - `SendAndParseAsync`: holds the parse, re-read and retry logic (see step 3).
+   - **`AgentPrompts.cs`:** all text the program sends to the AI, apart from `persona.md` itself:
+     - `LoadPersona` (fills `{{WORKSPACE}}` / `{{ALLOWED_COMMANDS}}`)
+     - `TaskMessage`
+     - `ToolResultMessage`
+     - `ParseRetryMessage`
+     - `UnknownActionMessage`
+
+     Change AI-facing wording here, and keep it consistent with `persona.md`.
 2. **`AiChatBrowser.cs`:**
    - `SendAsync`: fills the prompt box and clicks Send. It verifies the box emptied and re-clicks up to 3 times, because the page ignores clicks while it is still settling.
    - Waits until the count of `CompletedMessage` (assistant message with `data-message-complete`) goes up.
@@ -41,8 +49,8 @@ dotnet run --project AiAgent          # opens Edge, sends the persona, then prom
 3. **`AgentResponse.cs`:** `TryParse(reply, out result, out error)`.
    - Accepts a ```json fence, raw JSON, or text before the JSON.
    - Rendered code blocks lose their fence and gain "json" / "Copy code" labels, so it tries every `{` up to the last `}`.
-   - `error` is fed back to the AI. In `Program.SendAndParseAsync`, a failed parse first **re-reads the page** (after a 2s delay, in case the reply was still rendering), then retries the AI up to 3 times.
-   - The persona, the acknowledge line and `RetryPrompt` must all state the **same** format rule: exactly one JSON object, last in the reply, fence optional. Conflicting wording previously made the AI complain about contradictions.
+   - `error` is fed back to the AI. In `AgentSession.SendAndParseAsync`, a failed parse first **re-reads the page** (after a 2s delay, in case the reply was still rendering), then retries the AI up to 3 times.
+   - The persona, the acknowledge line and `AgentPrompts`' retry text must all state the **same** format rule: exactly one JSON object, last in the reply, fence optional. Conflicting wording previously made the AI complain about contradictions.
 4. **`Tools/`** (namespace `AiAgent.Tools`, `internal static` classes):
    - **`ToolDispatcher.Execute`** is the single entry point:
      1. Asks for approval when needed.

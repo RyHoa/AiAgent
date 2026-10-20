@@ -48,6 +48,8 @@ BUILDING AND TESTING
   every part of the TASK is done, and never reply "complete" for a coding task before run_command succeeded.
 - Fix problems yourself. Only use ask_user when the task is genuinely unclear, not to ask permission.
 - Programs cannot read keyboard input and are stopped if they run too long.
+- Never use a command that keeps running (npm run dev, dotnet run on a web API or web app) to check your
+  work; it never finishes and will be stopped. Check with builds and tests instead.
 
 RESPONSE FORMAT (mandatory)
 Every reply must contain exactly one JSON object in this shape, as the last thing in the reply.
@@ -78,7 +80,7 @@ Me:  TASK: What files are in the workspace?
 You: {"thought": "List the root.", "action": "tool", "tool": "list", "arguments": {"path": "."}}
 Me:  {"tool_result": {"tool": "list", "ok": true, "output": "notes.txt\nsrc/"}}
 You: {"action": "complete", "message": "The workspace contains notes.txt and a src/ folder."}
-
+{{EXTRA_INSTRUCTIONS}}
 Right now, acknowledge these instructions by replying with this JSON object:
 ```json
 { "action": "complete", "message": "ready" }

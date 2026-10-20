@@ -15,7 +15,10 @@ namespace AiAgent
             "(Reminder: request local commands by replying with the JSON object using \"action\": \"tool\". " +
             "My program runs them for you; they are not your built-in tools.)";
 
-        /// <summary>Reads Prompts/persona.md and fills in the {{WORKSPACE}} and {{ALLOWED_COMMANDS}} placeholders.</summary>
+        /// <summary>
+        /// Reads Prompts/persona.md and fills in the {{WORKSPACE}}, {{ALLOWED_COMMANDS}} and {{EXTRA_INSTRUCTIONS}}
+        /// placeholders. Extra instructions come from the files listed in Agent:ExtraPromptFiles (also in Prompts/).
+        /// </summary>
         public static string LoadPersona(AgentSettings settings)
         {
             string allowedCommands = settings.AllowedCommands.Length > 0
@@ -24,7 +27,25 @@ namespace AiAgent
 
             return File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Prompts", "persona.md"))
                 .Replace("{{WORKSPACE}}", settings.WorkspacePath)
-                .Replace("{{ALLOWED_COMMANDS}}", allowedCommands);
+                .Replace("{{ALLOWED_COMMANDS}}", allowedCommands)
+                .Replace("{{EXTRA_INSTRUCTIONS}}", LoadExtraInstructions(settings.ExtraPromptFiles));
+        }
+
+        /// <summary>The contents of each extra prompt file, separated by blank lines; empty when none are configured.</summary>
+        private static string LoadExtraInstructions(string[] fileNames)
+        {
+            if (fileNames.Length == 0)
+                return "";
+
+            var sections = new List<string>();
+            foreach (string fileName in fileNames)
+            {
+                string path = Path.Combine(AppContext.BaseDirectory, "Prompts", fileName);
+                if (!File.Exists(path))
+                    throw new FileNotFoundException($"Extra prompt file '{fileName}' (from Agent:ExtraPromptFiles) was not found in the Prompts folder.", path);
+                sections.Add(File.ReadAllText(path).Trim());
+            }
+            return "\n" + string.Join("\n\n", sections) + "\n";
         }
 
         /// <summary>The first message of a task.</summary>

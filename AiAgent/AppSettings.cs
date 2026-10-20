@@ -16,6 +16,8 @@ namespace AiAgent
         public string[] AllowedCommands { get; set; } = [];
         public int CommandTimeoutSeconds { get; set; } = 120;
         public int MaxCommandOutputChars { get; set; } = 4000;
+        /// <summary>Extra files from Prompts/ appended to the persona, e.g. "filemaker-conversion.md".</summary>
+        public string[] ExtraPromptFiles { get; set; } = [];
     }
 
     internal class BrowserSettings

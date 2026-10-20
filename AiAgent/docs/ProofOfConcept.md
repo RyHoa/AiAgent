@@ -93,9 +93,15 @@ Each part can change without touching the others:
     "MaxReadChars": 8000,
     "LogRawReplies": true,
     "RequireApproval": true,
-    "AllowedCommands": [ "dotnet build", "dotnet test", "dotnet run" ],
-    "CommandTimeoutSeconds": 120,
-    "MaxCommandOutputChars": 4000
+    "AllowedCommands": [
+      "dotnet build", "dotnet test", "dotnet run",
+      "dotnet new webapi", "dotnet new sln", "dotnet new console", "dotnet new xunit",
+      "dotnet sln add", "dotnet add package", "dotnet add reference",
+      "npm create vite@latest", "npm install", "npm ci", "npm run build", "npm run lint", "npm test"
+    ],
+    "CommandTimeoutSeconds": 300,
+    "MaxCommandOutputChars": 4000,
+    "ExtraPromptFiles": []
   },
   "Browser": {
     "AiChatUrl": "https://chatgpt.com/",
@@ -110,6 +116,8 @@ Each part can change without touching the others:
   }
 }
 ```
+`ExtraPromptFiles` lists extra files from `Prompts/` to append to the persona, in place of its `{{EXTRA_INSTRUCTIONS}}` placeholder. Leave it empty for normal coding work. For FileMaker conversions use `["filemaker-conversion.md"]`; see [FileMakerConversion.md](FileMakerConversion.md).
+
 **Machine-specific settings** go in `Config/appsettings.local.json`. It's optional and git-ignored, and it's loaded after `appsettings.json`, so any value in it overrides. For example, your real workspace:
 ```json
 { "Agent": { "WorkspacePath": "C:\\path\\to\\your\\workspace" } }
@@ -158,6 +166,7 @@ Each task is also sent with a one-line reminder of the JSON protocol (`TaskMessa
   1. Take the content of the last ```json fence, if there is one.
   2. Otherwise try each `{` up to the last `}` until one deserializes. A rendered code block loses its fence and gains "json" / "Copy code" labels, so this step handles that, and also handles text before the JSON.
   3. Deserialize with `PropertyNameCaseInsensitive = true`. A JSON object without `"action"` doesn't count.
+     - Only the **first complete JSON value** of each candidate is read, and anything after it is ignored. With long file contents the AI sometimes closes the object one brace too early and adds more, like `…"}},"message":""}`. The part before that is still a complete, valid request.
   4. If nothing parses, `error` explains why. It prefers the error from the candidate that starts like a JSON object (`{"...`), for example `'0x0A' is invalid within a JSON string`, which means a real line break inside a string. The other possible messages are "the JSON object has no "action" field" and "no JSON object was found in the reply".
 - **One format rule everywhere.** The persona, the acknowledge line and the retry message all say the same thing: *exactly one JSON object as the last thing in the reply; a ```json block is optional; short text before it is optional*. (These used to disagree: "end with a json block" vs "reply with only the JSON object". When a retry happened, the AI would complain that the instructions contradicted each other.)
 - **If parsing fails, re-read the page first.** The app waits 2 seconds and calls `AiChatBrowser.ReadLastReplyAsync()` again before asking the AI for anything. A reply can be read while ChatGPT is still rendering it: for example only "ChatGPT said:" without its JSON block yet. That gave "no JSON object was found" even though the page showed valid JSON. The re-read fixes that without bothering the AI. With `LogRawReplies` on, the second read is logged as `[raw reply (read again)]`.
@@ -211,11 +220,16 @@ All in namespace `AiAgent.Tools`, as `internal static` classes. A class name end
   - `new_path` is inside the folder being moved;
   - `path` is a file ("Use move_file for files").
 - `run_command(command, working_dir?)`: lets the AI build, run and test the code it writes.
-  - **Allowed commands:** only commands that start with an entry in `Agent:AllowedCommands` run. The defaults are `dotnet build`, `dotnet test` and `dotnet run`.
+  - **Allowed commands:** only commands that start with an entry in `Agent:AllowedCommands` run.
+    - The defaults cover `dotnet build/test/run`, specific `dotnet new` templates (`webapi`, `sln`, `console`, `xunit`), `dotnet sln add`, `dotnet add package/reference`, and the npm commands for a Vite + React front end.
+    - There's deliberately no bare `dotnet new`, which would allow `dotnet new install`.
+    - There's deliberately no `npm run dev`, which never exits.
   - **No shell:** the program is started directly, so `&&`, `|`, `>` and similar are rejected.
+  - **Finding the program:** a bare name such as `dotnet` or `npm` is looked up on `PATH`, trying `.exe`, then `.cmd`, then `.bat` in each folder. On Windows, `npm` and `npx` are `.cmd` scripts.
+  - **Batch files (`.cmd`/`.bat`):** Windows runs these through `cmd.exe`, which acts on `& | < > ^ % ! " ( )` even inside an argument. So for these programs, any argument containing one of those characters, or a line break, is refused.
   - **Workspace only:** it runs in the workspace, or in `working_dir` inside it. Absolute paths and `..` arguments must also point inside the workspace.
   - **No keyboard input:** stdin is closed, so programs that wait for input don't hang.
-  - **Timeout:** a command that runs longer than `CommandTimeoutSeconds` (default 120) is stopped, along with any processes it started.
+  - **Timeout:** a command that runs longer than `CommandTimeoutSeconds` (default 300, because `npm install` and first restores are slow) is stopped, along with any processes it started.
   - **Output:** stdout and stderr are returned together, with workspace paths made relative. Output longer than `MaxCommandOutputChars` (default 4000) is shortened, keeping the first quarter and the end, where errors usually are.
   - **Result:** `ok` is `true` only when the exit code is 0, so the AI can tell a failed build from a successful one.
   - **`--project` with a `.cs` file is rejected** with "To run a single file use: dotnet run File.cs". MSBuild's own error for that mistake (MSB4025) is confusing, and the AI got stuck on it in testing.
@@ -297,7 +311,7 @@ The offline checks call `ToolDispatcher.Execute` directly. They cover:
 
 **More tools (with approval)**
 - Show a diff in the approval prompt for `write_file` and `edit_file`, instead of a raw content preview.
-- Optionally add more commands to `AllowedCommands`, such as `dotnet new` or `dotnet add package`.
+- For the FileMaker conversion work (DDR tool, data migration, read-only source folder, and more), see the roadmap in [FileMakerConversion.md](FileMakerConversion.md).
 
 **Structure (once stable)**
 - Pull out an `IAiChatBackend` so you can swap the browser backend for an AI provider's API. An API supports native tool calling and removes the scraping and terms-of-use issues.

@@ -3,10 +3,12 @@ using System.Text;
 
 namespace AiAgent.Tools
 {
-    /// <summary>The run_command tool: runs an allow-listed command such as dotnet build/test/run in the workspace.</summary>
+    /// <summary>The run_command tool: runs an allow-listed command such as dotnet build or npm run build in the workspace.</summary>
     internal static class CommandTools
     {
         private static readonly HashSet<string> ShellOperators = new() { "&&", "||", "|", "&", ";", ">", ">>", "<", "2>", "2>&1" };
+        private static readonly string[] ExecutableExtensions = { ".exe", ".cmd", ".bat" };
+        private static readonly char[] BatchMetacharacters = { '&', '|', '<', '>', '^', '%', '!', '"', '(', ')', '\r', '\n' };
 
         /// <summary>
         /// Runs an allow-listed command (no shell) in the workspace and returns its exit code and output.
@@ -35,7 +37,21 @@ namespace AiAgent.Tools
                 throw new ArgumentException(
                     $"--project needs a .csproj file, not a .cs file. To run a single file use: dotnet run {tokens[projectFlag + 1]}");
 
-            var start = new ProcessStartInfo(tokens[0])
+            // npm and npx are .cmd scripts on Windows, which Process.Start can't find by bare name. Windows runs .cmd/.bat
+            // files through cmd.exe, which interprets characters like & and | even inside arguments, so those are refused.
+            string executable = ResolveExecutable(tokens[0]);
+            if (IsBatchFile(executable))
+            {
+                foreach (string token in tokens.Skip(1))
+                {
+                    if (token.IndexOfAny(BatchMetacharacters) >= 0)
+                        throw new ArgumentException(
+                            $"Argument '{token}' contains a character that is not allowed for '{tokens[0]}' " +
+                            "(& | < > ^ % ! \" ( ) or a line break). Remove it and run the command again.");
+                }
+            }
+
+            var start = new ProcessStartInfo(executable)
             {
                 WorkingDirectory = WorkspaceGuard.ResolvePath(ws, workingDir),
                 RedirectStandardInput = true,
@@ -87,6 +103,39 @@ namespace AiAgent.Tools
                 ? $"Timed out after {settings.CommandTimeoutSeconds}s and was stopped."
                 : $"Exit code: {process.ExitCode}";
             return new ToolOutput(!timedOut && process.ExitCode == 0, text.Length > 0 ? $"{status}\n{text}" : status);
+        }
+
+        /// <summary>
+        /// Finds the program for a bare command name like "dotnet" or "npm" by searching the PATH folders in order,
+        /// trying .exe, then .cmd, then .bat in each folder. Names with a folder or an extension are used as given.
+        /// </summary>
+        private static string ResolveExecutable(string name)
+        {
+            if (Path.IsPathRooted(name) || name.Contains('/') || name.Contains('\\') || Path.HasExtension(name))
+                return name;
+
+            string pathVariable = Environment.GetEnvironmentVariable("PATH") ?? "";
+            foreach (string entry in pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string folder = entry.Trim().Trim('"');
+                if (folder.Length == 0 || folder.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
+                    continue;
+                foreach (string extension in ExecutableExtensions)
+                {
+                    string candidate = Path.Combine(folder, name + extension);
+                    if (File.Exists(candidate))
+                        return candidate;
+                }
+            }
+
+            throw new FileNotFoundException($"'{name}' was not found on PATH. Is it installed?");
+        }
+
+        private static bool IsBatchFile(string executable)
+        {
+            string extension = Path.GetExtension(executable);
+            return extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".bat", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string Shorten(string text, int maxChars)

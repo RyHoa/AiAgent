@@ -7,7 +7,7 @@ namespace AiAgent.Tools
     {
         private const int MaxSearchResults = 50;
         private const long MaxSearchFileBytes = 1_000_000;
-        private static readonly HashSet<string> SkippedFolders = new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", ".git", ".vs", "node_modules" };
+        private static readonly HashSet<string> SkippedFolders = new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", ".git", ".vs", "node_modules", "dist", ".vite", "coverage" };
 
         internal static ToolOutput List(string workspace, string path)
         {

@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using System.Text.Json;
 
 namespace AiAgent
@@ -21,7 +22,7 @@ namespace AiAgent
                 string? candidateError;
                 try
                 {
-                    var parsed = JsonSerializer.Deserialize<AgentResponse>(candidate, Options);
+                    var parsed = DeserializeFirstValue(candidate);
                     if (!string.IsNullOrWhiteSpace(parsed?.Action))
                     {
                         result = parsed;
@@ -43,6 +44,17 @@ namespace AiAgent
             result = null;
             error = objectError ?? firstError ?? "no JSON object was found in the reply";
             return false;
+        }
+
+        /// <summary>
+        /// Reads the first complete JSON value and ignores anything after it. The AI sometimes closes the object one
+        /// brace too early and then adds more, e.g. ...}},"message":""} after a long file content. The first value is
+        /// still a complete, valid request, so it is used instead of rejecting the whole reply.
+        /// </summary>
+        private static AgentResponse? DeserializeFirstValue(string candidate)
+        {
+            var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(candidate));
+            return JsonSerializer.Deserialize<AgentResponse>(ref reader, Options);
         }
 
         private static bool LooksLikeObject(string candidate)

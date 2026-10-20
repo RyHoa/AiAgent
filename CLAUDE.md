@@ -11,6 +11,10 @@ It currently targets chatgpt.com (logged out). The real goal is a workplace chat
 
 [AiAgent/docs/ProofOfConcept.md](AiAgent/docs/ProofOfConcept.md) is the design doc and record of verified test results. Update it whenever tools, the protocol or the config change.
 
+The main use case being built toward is **converting FileMaker Pro apps (from DDR XML exports) to ASP.NET Core + React**.
+- The roadmap and what is already in place are in [AiAgent/docs/FileMakerConversion.md](AiAgent/docs/FileMakerConversion.md).
+- The conversion instructions for the AI are in `AiAgent/Prompts/filemaker-conversion.md`. They're turned on with `Agent:ExtraPromptFiles`, which fills the `{{EXTRA_INSTRUCTIONS}}` placeholder in `persona.md`.
+
 ## Commands
 ```
 dotnet build AiAgent.slnx
@@ -49,6 +53,7 @@ dotnet run --project AiAgent          # opens Edge, sends the persona, then prom
 3. **`AgentResponse.cs`:** `TryParse(reply, out result, out error)`.
    - Accepts a ```json fence, raw JSON, or text before the JSON.
    - Rendered code blocks lose their fence and gain "json" / "Copy code" labels, so it tries every `{` up to the last `}`.
+   - For each candidate it reads only the **first complete JSON value** (`Utf8JsonReader`) and ignores trailing text. With long file contents the AI sometimes closes the object too early (`…"}},"message":""}`), and the first value is still a valid request.
    - `error` is fed back to the AI. In `AgentSession.SendAndParseAsync`, a failed parse first **re-reads the page** (after a 2s delay, in case the reply was still rendering), then retries the AI up to 3 times.
    - The persona, the acknowledge line and `AgentPrompts`' retry text must all state the **same** format rule: exactly one JSON object, last in the reply, fence optional. Conflicting wording previously made the AI complain about contradictions.
 4. **`Tools/`** (namespace `AiAgent.Tools`, `internal static` classes):
@@ -71,7 +76,10 @@ dotnet run --project AiAgent          # opens Edge, sends the persona, then prom
 - **`WorkspaceGuard.ResolveSubfolder`:** folder tools also reject the workspace folder itself (`.`, `""`, `x/..`), so it can never be deleted or renamed. This is enforced in code, not just in the persona.
 - **`run_command`:**
   - Runs **without a shell**: shell operators are rejected, and `ProcessStartInfo.ArgumentList` is used.
-  - Only commands with a token-prefix match in `Agent:AllowedCommands` are allowed. Don't add a bare `"dotnet new"`, because that would also allow `dotnet new install`.
+  - Only commands with a token-prefix match in `Agent:AllowedCommands` are allowed.
+    - Don't add a bare `"dotnet new"`, because that would also allow `dotnet new install`.
+    - Don't add `npm run dev` or other commands that never exit.
+  - Bare program names are resolved on `PATH` (`.exe`, then `.cmd`, then `.bat`), so `npm` works. For `.cmd`/`.bat` programs, arguments containing `& | < > ^ % ! " ( )` or line breaks are refused, because `cmd.exe` would act on them. Don't relax this.
   - Path arguments are checked by the guard.
   - Stdin is closed.
   - There's a timeout that kills the whole process tree.

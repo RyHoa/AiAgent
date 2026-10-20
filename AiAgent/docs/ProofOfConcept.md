@@ -22,6 +22,61 @@ Console task ──► Persona + task ──► AI chat (Edge via Playwright)
                      └──────────► send back to AI chat ◄──────┘
 ```
 
+## How the pieces fit together
+Each file has one job, and together they make one round trip with the AI. In the order a message travels:
+
+| File | Job | In one line |
+|---|---|---|
+| `AgentPrompts.cs` | **What we say** to the AI | Builds the text we send |
+| `AiChatBrowser.cs` | **How we talk** to the website | Types into Edge, clicks Send, reads the reply off the page |
+| `AgentResponse.cs` | **Understanding what it said** | Turns the reply text into a C# object, or explains why it couldn't |
+| `AgentSession.cs` | **Running the conversation** | Uses the other three, plus the tools, in a loop until the task is done |
+
+### How one step flows
+```
+AgentSession.RunTaskAsync("Read favorite.txt")
+   │
+   ├─ AgentPrompts.TaskMessage(task)        → "TASK: Read favorite.txt\n\n(Reminder: ...)"
+   │
+   ├─ AiChatBrowser.SendAsync(text)         → types it into the AI chat, clicks Send,
+   │                                          waits, returns the reply text from the page:
+   │                                          "ChatGPT said: {"action":"tool","tool":"read_file",...}"
+   │
+   ├─ AgentResponse.TryParse(replyText)     → AgentResponse { Action="tool", Tool="read_file",
+   │                                          Arguments={"path":"favorite.txt"} }
+   │
+   ├─ ToolDispatcher.Execute(...)           → {"tool_result":{"tool":"read_file","ok":true,"output":"blue"}}
+   │
+   └─ AgentPrompts.ToolResultMessage(...)   → result + "(Current task: ... continue)"  → loop again
+```
+
+### Each file in a bit more detail
+- **`AgentPrompts.cs`: the words.**
+  - Every piece of text the program sends, apart from `persona.md`: the task message, the tool-result message, the "your JSON was invalid" message, and the "unknown action" message.
+  - It also loads `persona.md` and fills in its placeholders.
+  - It doesn't send anything, just builds strings. To change what the AI is told, edit this file (and keep it consistent with `persona.md`).
+- **`AiChatBrowser.cs`: the hands and eyes on the web page.**
+  - The only file that knows about Playwright, Edge and HTML selectors.
+  - It opens the page, fills the prompt box, clicks Send (clicking again if the click was ignored), waits until the reply is marked finished, and reads its text.
+  - It knows nothing about JSON or tools; it just moves text in and out of the page. Pointing the agent at another chat site, such as a workplace chatbot, mostly means changing the selectors in config.
+  - `DisposeAsync` closes Edge and Playwright's background driver process. `Program.cs` creates the browser with `await using`, so this runs automatically when the app exits, even after an error.
+- **`AgentResponse.cs`: the reader.**
+  - Defines the shape of a reply (`thought`, `action`, `tool`, `arguments`, `message`).
+  - `TryParse` finds the JSON in the messy page text (labels like "ChatGPT said:", "Copy code", prose before the JSON) and converts it. If it can't, it explains why, such as an unescaped line break.
+  - It doesn't touch the browser or run anything.
+- **`AgentSession.cs`: the conductor.**
+  - The only file that ties everything together: it sends the persona at startup, then for each task loops through send → parse → run tool → send result, until the AI says `complete` or `error`.
+  - It also handles problems: a reply with no JSON gets a page re-read, then a retry; it stops after `MaxIterations`; it prints `[tool]`, `[result]`, `[complete]` to the console.
+
+`Program.cs` only does start-up: it loads the config, creates the browser and the `AgentSession`, and reads tasks from the console. The tools themselves are in `Tools/` (see step 6).
+
+### Why split them up this way
+Each part can change without touching the others:
+- Rewording a prompt only touches `AgentPrompts`.
+- A new chat website only touches `AiChatBrowser` (and the selectors in config).
+- A change to the reply format only touches `AgentResponse`.
+- Changing how the loop works only touches `AgentSession`.
+
 ## Implementation steps
 
 ### 1. Project setup
@@ -81,7 +136,7 @@ See [`Prompts/persona.md`](../Prompts/persona.md) for the full text. It covers:
 - **The JSON reply format and rules,** plus an example exchange showing a request and a reply. The format is one rule: exactly one JSON object as the last thing in the reply. A ```json block and short text before it are optional.
 - **A closing instruction** to acknowledge with `ready`.
 
-Each task is also sent with a one-line reminder of the JSON protocol (`TaskReminder` in `Program.cs`).
+Each task is also sent with a one-line reminder of the JSON protocol (`TaskMessage` in `AgentPrompts.cs`).
 
 ### 4. Browser wrapper: `AiChatBrowser.cs`
 - `StartAsync()`:
@@ -116,7 +171,7 @@ All in namespace `AiAgent.Tools`, as `internal static` classes. A class name end
 
 | File | What's in it |
 |---|---|
-| `ToolDispatcher.cs` | `Execute`, the entry point called by `Program.cs`. It holds `AllToolNames` and `ToolsRequiringApproval`, wraps results as JSON, and has the private approval prompt (`AskForApproval`) and argument helpers (`GetString`, `RequireString`, `GetInt`, `GetBool`) |
+| `ToolDispatcher.cs` | `Execute`, the entry point called by `AgentSession`. It holds `AllToolNames` and `ToolsRequiringApproval`, wraps results as JSON, and has the private approval prompt (`AskForApproval`) and argument helpers (`GetString`, `RequireString`, `GetInt`, `GetBool`) |
 | `FileTools.cs` | the file and folder tools listed below |
 | `CommandTools.cs` | `run_command` and its private helpers |
 | `UserTools.cs` | `ask_user` |
@@ -171,15 +226,26 @@ All in namespace `AiAgent.Tools`, as `internal static` classes. A class name end
   - A recursive `delete_folder` adds the line `recursive: true (deletes the folder AND everything inside it)`, so you can see that the whole folder will go.
 - Wrap each tool in try/catch and return `ok:false` with the exception message.
 
-### 7. Agent loop: `Program.cs`
-1. Load the config and start `AiChatBrowser`.
-2. Read a task from the console.
-3. Send `"TASK: " + task` (the persona was already sent at startup).
-4. Loop up to `MaxIterations`:
-   - Parse the reply, retrying if needed.
-   - `tool`: run it and send the `tool_result`.
-   - `complete` / `error`: print the message and go back to step 2.
-5. Print each exchange (thought, tool and arguments, result preview) so you can watch it work.
+### 7. Agent loop: `Program.cs`, `AgentSession.cs`, `AgentPrompts.cs`
+- **`Program.cs`** (start-up only):
+  1. Loads the config (`appsettings.json` + optional `appsettings.local.json`) and checks the workspace exists.
+  2. Starts `AiChatBrowser` and creates an `AgentSession`.
+  3. Sends the persona, then reads tasks from the console.
+- **`AgentSession.cs`** (one conversation with the AI):
+  1. `SendPersonaAsync`: sends the persona once at startup.
+  2. `RunTaskAsync`: sends the task, then loops up to `MaxIterations`:
+     - parse the reply, re-reading the page or retrying the AI if needed (`SendAndParseAsync`);
+     - `tool`: run it and send back the `tool_result` together with the current task;
+     - `complete` / `error`: print the message and return to the console prompt.
+  3. Prints each exchange (thought, tool and arguments, result preview) so you can watch it work.
+- **`AgentPrompts.cs`:** every piece of text the program sends to the AI, apart from `persona.md`:
+  - `LoadPersona`
+  - `TaskMessage` (includes the protocol reminder)
+  - `ToolResultMessage` (includes the current-task reminder)
+  - `ParseRetryMessage`
+  - `UnknownActionMessage`
+
+  It's kept in one place so it stays consistent with the persona's format rule.
 
 ## Testing the POC
 1. Run `dotnet build` and then `dotnet run`. Edge opens on the AI chat site.

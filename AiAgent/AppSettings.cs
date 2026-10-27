@@ -16,6 +16,12 @@ namespace AiAgent
         public string[] AllowedCommands { get; set; } = [];
         public int CommandTimeoutSeconds { get; set; } = 120;
         public int MaxCommandOutputChars { get; set; } = 4000;
+        /// <summary>Where chats are saved; empty means AiAgent/Sessions in the project folder (git-ignored).</summary>
+        public string SessionsPath { get; set; } = "";
+        /// <summary>Largest replay message when reopening a chat; the chat box has a size limit.</summary>
+        public int ResumeChunkChars { get; set; } = 6000;
+        /// <summary>Tool outputs and file contents longer than this are shortened in the replay.</summary>
+        public int ResumeMaxResultChars { get; set; } = 1500;
     }
 
     internal class BrowserSettings

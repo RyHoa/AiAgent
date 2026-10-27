@@ -26,7 +26,12 @@ dotnet run --project AiAgent          # opens Edge, sends the persona, then prom
 - **No test project.** Tools can be exercised without a browser by calling `ToolDispatcher.Execute(toolName, JsonElement args, AgentSettings)` directly. Its return value is the exact `tool_result` JSON the AI would receive. For approval or `ask_user` paths, feed answers with `Console.SetIn`.
 
 ## Architecture (the flow across files)
-1. **`Program.cs`:** start-up only. `Main` loads config (`appsettings.json` + optional `appsettings.local.json`), checks the workspace exists, starts the browser, then creates an `AgentSession` and loops over console tasks.
+1. **`Program.cs`:** start-up only. `Main` loads config (`appsettings.json` + optional `appsettings.local.json`) and checks the workspace exists. It then shows the chat menu (`ChatMenu`), starts the browser, opens the chat file (`SessionLog`), creates an `AgentSession`, replays a reopened chat if needed, and loops over console tasks.
+   - **Session history** (`SessionLog`, `SessionHistory`, `ChatMenu`):
+     - **Saving:** every step is appended to a JSON Lines chat file and flushed immediately. The `sent`/`reply` events for the persona and replays are marked `persona`/`replay` so they're never replayed.
+     - **Where:** files go in `AiAgent/Sessions/<workspace>-<hash>/`, which is **git-ignored and must never be committed** (code, file contents, personal paths). The folder is found by walking up from `bin/` to `AiAgent.csproj`, and `Agent:SessionsPath` overrides it.
+     - **Reopening:** a chat appends to the same file. `SessionHistory.BuildReplay` rebuilds the AI's context from task, tool and outcome events only, shortened and split into parts.
+     - Any change that adds events or messages must keep the replay from containing replay or persona text.
    - **`AgentSession.cs`:** one conversation with the AI.
      - `SendPersonaAsync`: sends the persona once; the AI acknowledges with `{"action":"complete","message":"ready"}`.
      - `RunTaskAsync`: sends `TASK: …` and gets a reply.
@@ -39,6 +44,7 @@ dotnet run --project AiAgent          # opens Edge, sends the persona, then prom
      - `ToolResultMessage`
      - `ParseRetryMessage`
      - `UnknownActionMessage`
+     - `ContinueTaskMessage`, `ReplayPartMessage`, `ReplayDoneMessage` (session resume)
 
      Change AI-facing wording here, and keep it consistent with `persona.md`.
 2. **`AiChatBrowser.cs`:**

@@ -363,3 +363,6 @@ MigrationBackup/
 FodyWeavers.xsd
 # Machine-specific AiAgent settings (e.g. your real WorkspacePath)
 AiAgent/Config/appsettings.local.json
+
+# Saved AI chats (contain code, file contents and personal paths): local only
+AiAgent/Sessions/

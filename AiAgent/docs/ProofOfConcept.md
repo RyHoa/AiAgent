@@ -31,6 +31,7 @@ Each file has one job, and together they make one round trip with the AI. In the
 | `AiChatBrowser.cs` | **How we talk** to the website | Types into Edge, clicks Send, reads the reply off the page |
 | `AgentResponse.cs` | **Understanding what it said** | Turns the reply text into a C# object, or explains why it couldn't |
 | `AgentSession.cs` | **Running the conversation** | Uses the other three, plus the tools, in a loop until the task is done |
+| `SessionLog.cs` / `SessionHistory.cs` | **Remembering the conversation** | Saves every step to a chat file as it happens, and replays a saved chat after a crash or restart |
 
 ### How one step flows
 ```
@@ -68,7 +69,12 @@ AgentSession.RunTaskAsync("Read favorite.txt")
   - The only file that ties everything together: it sends the persona at startup, then for each task loops through send → parse → run tool → send result, until the AI says `complete` or `error`.
   - It also handles problems: a reply with no JSON gets a page re-read, then a retry; it stops after `MaxIterations`; it prints `[tool]`, `[result]`, `[complete]` to the console.
 
-`Program.cs` only does start-up: it loads the config, creates the browser and the `AgentSession`, and reads tasks from the console. The tools themselves are in `Tools/` (see step 6).
+- **`SessionLog.cs` / `SessionHistory.cs` / `ChatMenu.cs`: the memory.** See "Session history and resume" below.
+  - `SessionLog` writes each step of the chat to a file the moment it happens.
+  - `SessionHistory` lists saved chats, turns one back into a readable transcript, and deletes chats safely.
+  - `ChatMenu` is the startup menu: open a previous chat, start a new one, or delete one.
+
+`Program.cs` only does start-up: it loads the config, shows the chat menu, creates the browser and the `AgentSession`, and reads tasks from the console. The tools themselves are in `Tools/` (see step 6).
 
 ### Why split them up this way
 Each part can change without touching the others:
@@ -229,8 +235,10 @@ All in namespace `AiAgent.Tools`, as `internal static` classes. A class name end
 ### 7. Agent loop: `Program.cs`, `AgentSession.cs`, `AgentPrompts.cs`
 - **`Program.cs`** (start-up only):
   1. Loads the config (`appsettings.json` + optional `appsettings.local.json`) and checks the workspace exists.
-  2. Starts `AiChatBrowser` and creates an `AgentSession`.
-  3. Sends the persona, then reads tasks from the console.
+  2. Shows the chat menu (`ChatMenu`): open a previous chat, start a new one, or delete one.
+  3. Starts `AiChatBrowser`, opens the chat file (`SessionLog`), and creates an `AgentSession`.
+  4. Sends the persona. When reopening a chat, it replays the previous conversation and offers to continue an unfinished task.
+  5. Reads tasks from the console. A normal exit records `session_end`; a crash records a `crash` event and then fails as before.
 - **`AgentSession.cs`** (one conversation with the AI):
   1. `SendPersonaAsync`: sends the persona once at startup.
   2. `RunTaskAsync`: sends the task, then loops up to `MaxIterations`:
@@ -245,7 +253,60 @@ All in namespace `AiAgent.Tools`, as `internal static` classes. A class name end
   - `ParseRetryMessage`
   - `UnknownActionMessage`
 
-  It's kept in one place so it stays consistent with the persona's format rule.
+  It's kept in one place so it stays consistent with the persona's format rule. The session-history messages live here too: `ContinueTaskMessage`, `ReplayPartMessage` and `ReplayDoneMessage`.
+
+### 8. Session history and resume: `SessionLog.cs`, `SessionHistory.cs`, `ChatMenu.cs`
+The workplace chatbot starts a new, empty chat on every visit, and its chat URL never changes. So after a crash or restart, the app has to keep the history **itself** and **rebuild the AI's context** in the new chat.
+
+**The chat file** (`SessionLog`):
+- **One chat is one JSON Lines file:** one event per line, written and flushed to disk immediately, so a crash loses at most the step in progress.
+- **Events:**
+  - `session_start` (workspace, chat site)
+  - `task_start` (`continued: true` when continuing an unfinished task)
+  - `sent` / `reply` (the raw text)
+  - `tool_call` (tool, thought, arguments)
+  - `tool_result` (nested JSON)
+  - `task_end` (complete / error / stopped, plus the message)
+  - `resumed`
+  - `session_end`
+  - `crash`
+- **The persona and replay messages** are logged with `"persona": true` / `"replay": true`, so they're never replayed again.
+- **Reopening a chat appends to the same file,** so one file holds the whole conversation across any number of restarts.
+- **The file can be opened in an editor while the app runs.** Use an editor that allows shared access.
+
+**Where the files go:** `AiAgent/Sessions/<workspace name>-<hash of the workspace path>/<yyyy-MM-dd_HHmmss>.jsonl`.
+- That's in the project folder, found by walking up from `bin/` to `AiAgent.csproj`, not in `bin/`, so a clean or rebuild doesn't delete chats.
+- **`AiAgent/Sessions/` is git-ignored.** Chats contain code, file contents and personal paths, and must stay on the local machine.
+- **`Agent:SessionsPath`** (absolute, or relative to the project folder) moves them elsewhere.
+- A published exe with no project folder above it uses `<exe folder>/Sessions`.
+- **Caveat:** don't set `WorkspacePath` to this repo itself, or the AI's file tools could read the chat files.
+
+**The startup menu** (`ChatMenu`):
+```
+Chats for this workspace:
+  1) 27 Oct 14:02  "Create the Contacts entity…"   3 tasks  UNFINISHED
+  2) 26 Oct 09:40  "Start the FileMaker migration" 5 tasks  ended normally
+
+Enter a number to open that chat, N (or Enter) for a new chat, or D and a number to delete a chat (e.g. D2):
+```
+- **Chats are listed most recently used first,** titled by their first task.
+- **Statuses:**
+  - `UNFINISHED`: a task was running when the app stopped;
+  - `ended normally`: exited with a blank task;
+  - `closed without exiting`: the window was closed at the `Task:` prompt.
+- **`D<n>`:** asks for confirmation, then deletes only that chat file (`SessionHistory.DeleteSession` refuses anything outside the workspace's sessions folder). A chat open in another running copy can't be deleted.
+- **With no chats yet,** the app goes straight to a new chat.
+
+**Reopening a chat** (`AgentSession.ResumeAsync`):
+1. The persona is sent as usual.
+2. `SessionHistory.BuildReplay` turns the chat file into a transcript of the whole conversation: every task, every AI step with its thought and arguments, every result, and every outcome.
+   - Raw traffic (persona, retries, earlier replays) is skipped.
+   - Tool outputs and file contents (`content`, `new_text`, `old_text`) longer than `Agent:ResumeMaxResultChars` (1500) are shortened with "(shortened; re-read the file if you need it)". The files on disk are the real current state.
+   - Where a task was interrupted, the transcript says "(UNFINISHED: the app stopped here)".
+3. The transcript is sent in parts of at most `Agent:ResumeChunkChars` (6000), each as "PREVIOUS CONVERSATION (part i of n)… reply ok", then a closing message.
+4. If a task was unfinished, the app asks `Continue the unfinished task "…"? (y/n)`. On `y`, the task is sent with `ContinueTaskMessage` ("carry on from the steps already done instead of starting over").
+
+**Limit (next update):** this replays the **whole** chat. That's fine for short and medium chats. Very long chats need many replay messages, and the chatbot may forget the oldest parts. The next update adds a size-limited **tiered replay**: a short log-built summary of every task, the most recent tasks in full, and the unfinished task always in full.
 
 ## Testing the POC
 1. Run `dotnet build` and then `dotnet run`. Edge opens on the AI chat site.
@@ -305,8 +366,12 @@ The offline checks call `ToolDispatcher.Execute` directly. They cover:
 - Describe each tool once, in a single tool table (name, signature, description, needs approval, method to call). Generate the dispatch, `AllToolNames`, `ToolsRequiringApproval` and the persona's tool list from it, so they can't drift apart.
 - Use `Microsoft.Extensions.Hosting` for DI, logging and config.
 
+**Session history** (the basics are done; see step 8)
+- **Tiered replay for very long chats:** a log-built summary of every task, the most recent tasks in full up to `Agent:ResumeMaxChars`, and the unfinished task always in full.
+- `/sessions` and `/show` commands to browse or switch chats during a run. Today the menu is at startup only.
+- Automatic cleanup of old chat files.
+
 **Observability and safety**
-- Save every exchange to a transcript file (JSONL) for debugging prompts.
 - Add a token/character budget per task and a stop command (for example, typing `stop`).
 - Limit file reads to an allow-list of extensions and skip `bin/`, `obj/`, `.git/`.
 

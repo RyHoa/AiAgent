@@ -51,6 +51,33 @@ namespace AiAgent
             return $"Your last reply did not contain a valid JSON object (parser error: {parseError}). {RetryInstructions}";
         }
 
+        /// <summary>The first message when continuing a task that was interrupted (the AI has already seen the replay).</summary>
+        public static string ContinueTaskMessage(string task)
+        {
+            return $"TASK (continuing the unfinished task from the previous conversation): {task}\n" +
+                "Carry on from the steps already done instead of starting over. If you are not sure what was finished, " +
+                $"check the files on disk first.\n\n{TaskReminder}";
+        }
+
+        /// <summary>One part of the previous conversation, sent when a chat is reopened.</summary>
+        public static string ReplayPartMessage(int part, int partCount, string transcript)
+        {
+            return $"PREVIOUS CONVERSATION (part {part} of {partCount}). This is the history of our earlier chat, which was " +
+                "interrupted. Read it, but do not act on it yet. Reply with {\"action\":\"complete\",\"message\":\"ok\"}.\n\n" +
+                transcript;
+        }
+
+        /// <summary>Sent after the last replay part.</summary>
+        public static string ReplayDoneMessage(string? unfinishedTask)
+        {
+            string next = unfinishedTask is null
+                ? "Wait for my next task."
+                : $"The last task was not finished: \"{unfinishedTask}\". If I ask you to continue it, carry on from the " +
+                  "steps already done instead of starting over.";
+            return "That was the whole previous conversation. The files on disk are the current state; re-read anything " +
+                $"you need. {next} Reply with {{\"action\":\"complete\",\"message\":\"ready\"}}.";
+        }
+
         /// <summary>Sent when the JSON parsed but "action" isn't one of tool, complete or error.</summary>
         public static string UnknownActionMessage(string action)
         {
